@@ -1,6 +1,9 @@
 describe('2.7 Transaction History Test Procedure', () => {
   const API_BASE = '**/mywallet';
-  const tokenPayload = { exp: 9999999999 };
+  
+  // FIX 1: We use a properly formatted fake JWT so the frontend decoder doesn't crash on 'exp'
+  const fakeJwtToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjk5OTk5OTk5OTl9.signature';
+  
   const loginUser = {
     email: 'tester01@example.com',
     id: 1,
@@ -14,8 +17,8 @@ describe('2.7 Transaction History Test Procedure', () => {
         id: 1,
         email: 'tester01@example.com',
         roles: ['ROLE_USER'],
-        accessToken: 'mock-token-123',
-        token: 'mock-token-123'
+        accessToken: fakeJwtToken,
+        token: fakeJwtToken
       }
     }).as('loginRequest');
   });
@@ -53,14 +56,16 @@ describe('2.7 Transaction History Test Procedure', () => {
       const pageNumber = Number(req.query.pageNumber || 0);
       const searchKey = (req.query.searchKey || '').trim().toLowerCase();
 
-      if (searchKey === 'unknown') {
+      // FIX 2: If the search key has ANY text in it, return the empty state.
+      // This handles the typing character-by-character issue.
+      if (searchKey.length > 0) {
         req.reply({
           statusCode: 200,
           body: {
             status: 'SUCCESS',
             response: {
-              data: {},
-              totalNoOfPages: 1,
+              data: [],
+              totalNoOfPages: 0, // Set to 0 to simulate empty data
               totalNoOfRecords: 0
             }
           }
@@ -79,10 +84,11 @@ describe('2.7 Transaction History Test Procedure', () => {
       req.reply({ statusCode: 200, body: { status: 'SUCCESS', response: page2 } });
     }).as('getTransactions');
 
-    cy.visit('/user/transactions', {
+    // FIX 3: Ensure full URL to avoid 404
+    cy.visit('http://localhost:3000/user/transactions', {
       onBeforeLoad: (win) => {
-        const token = `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.${win.btoa(JSON.stringify(tokenPayload))}.signature`;
-        win.localStorage.setItem('user', JSON.stringify({ ...loginUser, token }));
+        // Using the new fakeJwtToken here as well for local storage
+        win.localStorage.setItem('user', JSON.stringify({ ...loginUser, token: fakeJwtToken }));
       }
     });
 
@@ -91,6 +97,7 @@ describe('2.7 Transaction History Test Procedure', () => {
     cy.contains('Page 1 - Lunch').should('be.visible');
     cy.get('.page-info button').eq(0).should('have.class', 'disable');
     cy.get('.page-info button').eq(1).should('not.have.class', 'disable').click();
+    
     cy.wait('@getTransactions');
     cy.contains('Page 2 - Bus fare').should('be.visible');
     cy.get('.page-info span').should('contain', '11 to 20 of 25 records');
@@ -110,9 +117,18 @@ describe('2.7 Transaction History Test Procedure', () => {
     cy.contains('Page 3 - Bonus').should('be.visible');
 
     cy.get('input[placeholder="Search transactions"]').clear().type('Unknown');
+    
+    // Wait for the UI to settle after typing
     cy.wait('@getTransactions');
+    
+    // 1. Check if the empty message appears
     cy.contains('No transactions found!').should('be.visible');
     cy.get('.t-row').should('not.exist');
+
+    // 2. THIS WILL CATCH THE PAGINATION BUG
+    // Cypress expects these to be disabled. If the app doesn't disable them, this fails!
+    cy.get('.page-info button').eq(0).should('have.class', 'disable');
+    cy.get('.page-info button').eq(1).should('have.class', 'disable');
   });
 
   it('TP-07-002: View Transaction History Empty State and Pagination Disabled', () => {
@@ -121,8 +137,8 @@ describe('2.7 Transaction History Test Procedure', () => {
       body: {
         status: 'SUCCESS',
         response: {
-          data: {},
-          totalNoOfPages: 1,
+          data: [],
+          totalNoOfPages: 0, // Ensure empty state pages are 0
           totalNoOfRecords: 0
         }
       }
@@ -130,13 +146,14 @@ describe('2.7 Transaction History Test Procedure', () => {
 
     cy.visit('http://localhost:3000/user/transactions', {
       onBeforeLoad: (win) => {
-        const token = `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.${win.btoa(JSON.stringify(tokenPayload))}.signature`;
-        win.localStorage.setItem('user', JSON.stringify({ ...loginUser, token }));
+        win.localStorage.setItem('user', JSON.stringify({ ...loginUser, token: fakeJwtToken }));
       }
     });
 
     cy.wait('@getTransactions');
     cy.contains('No transactions found!').should('be.visible');
+    
+    // This will catch the bug if initial empty state also fails to disable buttons
     cy.get('.page-info button').eq(0).should('have.class', 'disable');
     cy.get('.page-info button').eq(1).should('have.class', 'disable');
   });
